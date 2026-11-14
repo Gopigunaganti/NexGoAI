@@ -1,15 +1,23 @@
+import os
 from typing import Dict, List, Optional
 
-from langchain_ollama import ChatOllama
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_groq import ChatGroq
+from dotenv import load_dotenv
 
+load_dotenv()
 
-MODEL_NAME = "llama3.2:3b"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    raise RuntimeError("GROQ_API_KEY is missing from your .env file")
 
-model = ChatOllama(
+MODEL_NAME = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+
+model = ChatGroq(
     model=MODEL_NAME,
-    client_kwargs={"timeout": 60},
+    api_key=GROQ_API_KEY,
+    timeout=60,
 )
 
 prompt = ChatPromptTemplate.from_messages([

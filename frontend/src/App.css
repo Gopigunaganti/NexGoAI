@@ -477,6 +477,108 @@
   font-size: 12px;
 }
 
+.clear-all-chats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: #777783;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+}
+
+.clear-all-chats:hover:not(:disabled) {
+  border-color: #ffdddd;
+  background: #fff0f0;
+  color: #c03939;
+}
+
+.clear-all-chats:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.clear-all-success {
+  padding: 0 10px;
+  color: #278454;
+  font-size: 12px;
+}
+
+.clear-all-backdrop {
+  position: fixed;
+  z-index: 10;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(20 20 30 / 45%);
+}
+
+.clear-all-dialog {
+  width: min(100%, 420px);
+  padding: 24px;
+  border: 1px solid #e5e5eb;
+  border-radius: 14px;
+  background: white;
+  box-shadow: 0 18px 60px rgb(0 0 0 / 18%);
+}
+
+.clear-all-dialog h2 {
+  margin: 0;
+  color: #202123;
+  font-size: 18px;
+}
+
+.clear-all-dialog > p {
+  margin: 12px 0 0;
+  color: #666672;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.clear-all-dialog .clear-all-error {
+  color: #c03939;
+}
+
+.clear-all-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.clear-all-actions button {
+  min-width: 88px;
+  padding: 9px 14px;
+  border: 1px solid #dedee5;
+  border-radius: 8px;
+  background: white;
+  color: #393944;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.clear-all-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.clear-all-actions .clear-all-confirm {
+  border-color: #c03939;
+  background: #c03939;
+  color: white;
+}
+
+.clear-all-actions .clear-all-confirm:hover:not(:disabled) {
+  border-color: #a52e2e;
+  background: #a52e2e;
+}
+
 .history-item {
   display: flex;
   align-items: center;

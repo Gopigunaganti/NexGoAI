@@ -4,7 +4,9 @@ import "./App.css";
 const API_URL = "http://127.0.0.1:8000/api/v1";
 
 async function fetchConversations() {
-  const response = await fetch(`${API_URL}/conversations`);
+  const response = await fetch(`${API_URL}/conversations`, {
+    cache: "no-store",
+  });
 
   if (!response.ok) {
     throw new Error(`Backend returned HTTP ${response.status}`);
@@ -23,6 +25,10 @@ function App() {
   const [conversations, setConversations] = useState([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState("");
+  const [clearAllSuccess, setClearAllSuccess] = useState("");
+  const [clearAllError, setClearAllError] = useState("");
+  const [isClearAllDialogOpen, setIsClearAllDialogOpen] = useState(false);
+  const [isClearingAllChats, setIsClearingAllChats] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,6 +39,7 @@ function App() {
         if (!cancelled) {
           setConversations(items);
           setHistoryError("");
+          setClearAllSuccess("");
         }
       } catch (error) {
         console.error("Could not load chat history:", error);
@@ -69,6 +76,7 @@ function App() {
     setMessage("");
     setChatTitle("New chat");
     setConversationId(null);
+    setClearAllSuccess("");
   }
 
   async function handleSelectConversation(id) {
@@ -76,6 +84,7 @@ function App() {
 
     setIsHistoryLoading(true);
     setHistoryError("");
+    setClearAllSuccess("");
 
     try {
       const response = await fetch(`${API_URL}/conversations/${id}`);
@@ -128,6 +137,35 @@ function App() {
     }
   }
 
+  async function handleClearAllChats() {
+    setIsClearingAllChats(true);
+    setClearAllError("");
+
+    try {
+      const response = await fetch(`${API_URL}/conversations`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Backend returned HTTP ${response.status}`);
+      }
+
+      setConversations([]);
+      setMessages([]);
+      setMessage("");
+      setChatTitle("New chat");
+      setConversationId(null);
+      setHistoryError("");
+      setClearAllSuccess("All chats cleared.");
+      setIsClearAllDialogOpen(false);
+    } catch (error) {
+      console.error("Could not clear chats:", error);
+      setClearAllError("Chats could not be cleared. Please try again.");
+    } finally {
+      setIsClearingAllChats(false);
+    }
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
 
@@ -137,6 +175,7 @@ function App() {
     setMessage("");
     setIsLoading(true);
     setChatTitle(text.slice(0, 28));
+    setClearAllSuccess("");
 
     setMessages((previous) => [
       ...previous,
@@ -276,6 +315,34 @@ function App() {
           <span>＋</span> New chat
         </button>
 
+        <button
+          className="clear-all-chats"
+          onClick={() => {
+            setClearAllError("");
+            setIsClearAllDialogOpen(true);
+          }}
+          disabled={isLoading || isHistoryLoading || isClearingAllChats}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M3 6h18" />
+            <path d="M8 6V4h8v2" />
+            <path d="m19 6-1 14H6L5 6" />
+            <path d="M10 11v5" />
+            <path d="M14 11v5" />
+          </svg>
+          <span>Clear All Chats</span>
+        </button>
+
         <p className="sidebar-label">YOUR WORKSPACE</p>
 
         <div className="conversation-list">
@@ -339,6 +406,11 @@ function App() {
           {historyError && (
             <p className="empty-history" role="alert">
               {historyError}
+            </p>
+          )}
+          {clearAllSuccess && (
+            <p className="clear-all-success" role="status">
+              {clearAllSuccess}
             </p>
           )}
         </div>
@@ -443,6 +515,54 @@ function App() {
           </p>
         </div>
       </main>
+
+      {isClearAllDialogOpen && (
+        <div className="clear-all-backdrop">
+          <section
+            className="clear-all-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="clear-all-title"
+            aria-describedby="clear-all-description"
+            aria-busy={isClearingAllChats}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !isClearingAllChats) {
+                setIsClearAllDialogOpen(false);
+              }
+            }}
+          >
+            <h2 id="clear-all-title">Clear all chats?</h2>
+            <p id="clear-all-description">
+              This will permanently delete all conversations and their
+              associated data. This action cannot be undone.
+            </p>
+            {clearAllError && (
+              <p className="clear-all-error" role="alert">
+                {clearAllError}
+              </p>
+            )}
+            <div className="clear-all-actions">
+              <button
+                type="button"
+                className="clear-all-cancel"
+                onClick={() => setIsClearAllDialogOpen(false)}
+                disabled={isClearingAllChats}
+                autoFocus
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="clear-all-confirm"
+                onClick={handleClearAllChats}
+                disabled={isClearingAllChats}
+              >
+                {isClearingAllChats ? "Clearing…" : "Clear All"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
