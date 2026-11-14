@@ -155,6 +155,32 @@ async def get_conversation(
     }
 
 
+@app.delete("/api/v1/conversations")
+async def clear_conversations(
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        result = await db.execute(select(Conversation))
+        conversations = result.scalars().all()
+
+        for conversation in conversations:
+            await db.delete(conversation)
+
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("Failed to clear conversations")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to clear conversations.",
+        )
+
+    return {
+        "message": "All conversations cleared successfully.",
+        "deleted_count": len(conversations),
+    }
+
+
 @app.delete("/api/v1/conversations/{conversation_id}")
 async def delete_conversation(
     conversation_id: str,
