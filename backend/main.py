@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.auth import require_user
 from backend.db_session import AsyncSessionLocal, get_db
 from backend.embeddings import EMBEDDING_MODEL, embed_documents
 from backend.models import Conversation, Document, DocumentChunk, Message
@@ -48,7 +49,14 @@ MAX_HISTORY_MESSAGES = 10
 async def load_document_context(
     db: AsyncSession,
     request: ChatRequest,
+    user_id: str,
 ) -> tuple[str, str]:
+    if request.document_ids:
+        owned = await db.execute(select(Document.id).where(
+            Document.id.in_(request.document_ids), Document.owner_id == user_id
+        ))
+        if set(owned.scalars().all()) != set(request.document_ids):
+            raise HTTPException(status_code=404, detail="Document not found.")
     try:
         chunks = await retrieve_relevant_chunks(
             db,
@@ -87,6 +95,7 @@ async def save_exchange(
     conversation_id: str,
     user_message: str,
     assistant_message: str,
+    user_id: str,
 ) -> None:
     async with AsyncSessionLocal() as db:
         conversation = await db.get(Conversation, conversation_id)
@@ -94,9 +103,13 @@ async def save_exchange(
         if conversation is None:
             conversation = Conversation(
                 id=conversation_id,
+                owner_id=user_id,
                 title=user_message[:40] or "New chat",
             )
             db.add(conversation)
+
+        if conversation.owner_id != user_id:
+            raise HTTPException(status_code=404, detail="Conversation not found.")
 
         db.add_all([
             Message(
@@ -122,6 +135,7 @@ def health_check():
 @app.get("/api/v1/documents")
 async def list_documents(
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(require_user),
 ):
     result = await db.execute(
         select(
@@ -131,6 +145,7 @@ async def list_documents(
             func.count(DocumentChunk.id).label("chunk_count"),
         )
         .outerjoin(DocumentChunk, DocumentChunk.document_id == Document.id)
+        .where(Document.owner_id == user_id)
         .group_by(Document.id)
         .order_by(Document.created_at.desc())
     )
@@ -151,6 +166,7 @@ async def list_documents(
 async def upload_document(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(require_user),
 ):
     try:
         content = await file.read(MAX_PDF_SIZE_BYTES + 1)
@@ -184,7 +200,7 @@ async def upload_document(
             ),
         ) from exc
 
-    document = Document(id=str(uuid4()), filename=filename)
+    document = Document(id=str(uuid4()), filename=filename, owner_id=user_id)
     document.chunks = [
         DocumentChunk(
             page_number=chunk.page_number,
@@ -216,9 +232,10 @@ async def upload_document(
 async def delete_document(
     document_id: str,
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(require_user),
 ):
     document = await db.get(Document, document_id)
-    if document is None:
+    if document is None or document.owner_id != user_id:
         raise HTTPException(status_code=404, detail="Document not found.")
 
     try:
@@ -239,14 +256,19 @@ async def delete_document(
 async def chat(
     request: ChatRequest,
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(require_user),
 ):
+    if request.conversation_id:
+        existing = await db.get(Conversation, request.conversation_id)
+        if existing is None or existing.owner_id != user_id:
+            raise HTTPException(status_code=404, detail="Conversation not found.")
     conversation_id = request.conversation_id or str(uuid4())
 
     try:
         history = (await load_history(db, conversation_id))[
             -MAX_HISTORY_MESSAGES:
         ]
-        context, citations = await load_document_context(db, request)
+        context, citations = await load_document_context(db, request, user_id)
 
         answer = await asyncio.to_thread(
             generate_response,
@@ -260,6 +282,7 @@ async def chat(
             conversation_id,
             request.message,
             answer,
+            user_id,
         )
 
         return ChatResponse(
@@ -281,9 +304,10 @@ async def chat(
 @app.get("/api/v1/conversations")
 async def list_conversations(
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(require_user),
 ):
     result = await db.execute(
-        select(Conversation).order_by(Conversation.created_at.desc())
+        select(Conversation).where(Conversation.owner_id == user_id).order_by(Conversation.created_at.desc())
     )
     conversations = result.scalars().all()
 
@@ -303,9 +327,10 @@ async def list_conversations(
 async def get_conversation(
     conversation_id: str,
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(require_user),
 ):
     conversation = await db.get(Conversation, conversation_id)
-    if conversation is None:
+    if conversation is None or conversation.owner_id != user_id:
         raise HTTPException(status_code=404, detail="Conversation not found.")
 
     return {
@@ -317,9 +342,10 @@ async def get_conversation(
 @app.delete("/api/v1/conversations")
 async def clear_conversations(
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(require_user),
 ):
     try:
-        result = await db.execute(select(Conversation))
+        result = await db.execute(select(Conversation).where(Conversation.owner_id == user_id))
         conversations = result.scalars().all()
 
         for conversation in conversations:
@@ -344,9 +370,10 @@ async def clear_conversations(
 async def delete_conversation(
     conversation_id: str,
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(require_user),
 ):
     conversation = await db.get(Conversation, conversation_id)
-    if conversation is None:
+    if conversation is None or conversation.owner_id != user_id:
         raise HTTPException(status_code=404, detail="Conversation not found.")
 
     await db.delete(conversation)
@@ -365,14 +392,19 @@ def next_chunk(iterator):
 async def chat_stream(
     request: ChatRequest,
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(require_user),
 ):
+    if request.conversation_id:
+        existing = await db.get(Conversation, request.conversation_id)
+        if existing is None or existing.owner_id != user_id:
+            raise HTTPException(status_code=404, detail="Conversation not found.")
     conversation_id = request.conversation_id or str(uuid4())
 
     try:
         history = (await load_history(db, conversation_id))[
             -MAX_HISTORY_MESSAGES:
         ]
-        context, citations = await load_document_context(db, request)
+        context, citations = await load_document_context(db, request, user_id)
     except HTTPException:
         raise
     except Exception:
@@ -415,6 +447,7 @@ async def chat_stream(
                 conversation_id,
                 request.message,
                 full_answer,
+                user_id,
             )
 
             yield "event: done\n"

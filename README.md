@@ -67,3 +67,30 @@ embedding model on first use, so the container needs network access when the
 model is not already cached. On a cloud platform, set `DATABASE_URL` and
 `GROQ_API_KEY` as environment variables and configure the service to use the
 container's `PORT` (default `8000`).
+
+## Email and phone sign-in
+
+Authentication uses Supabase Auth with email or SMS one-time codes. Create a
+Supabase project and copy its URL and publishable key to the backend `.env`
+and frontend `.env.local`, following the two `.env.example` files. Only use a
+publishable/anon key in the browser, never a service-role key.
+
+In Supabase Authentication, enable email sign-in and change the Magic Link
+email template to include `{{ .Token }}` so users receive the code expected
+by this UI. Configure SMTP for production email delivery. Enable phone sign-in
+and configure an SMS provider to support phone verification. Configure provider
+rate limits and delivery settings before public use. Provider charges may apply.
+
+Run `python create_tables.py` before starting the updated backend. This adds
+indexed ownership columns to existing databases. Existing anonymous chats and
+PDFs are retained with no owner and hidden from signed-in accounts. To retain
+access to your own legacy data, an administrator must explicitly assign those
+rows to your verified Supabase user UUID after checking their ownership.
+
+Every API request sends the current access token. FastAPI validates it against
+the configured Supabase Auth server, requires a verified email or phone, and
+scopes conversations, deletion, uploads and document retrieval to that user.
+The browser SDK manages session refresh and persistence. Email and phone sign-in
+can create separate accounts unless account linking is configured separately.
+
+Validation of live email/SMS delivery requires configured provider credentials.
