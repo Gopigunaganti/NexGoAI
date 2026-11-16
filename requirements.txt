@@ -1,7 +1,11 @@
-fastapi
-uvicorn[standard]
-sqlalchemy[asyncio]
-python-dotenv
 asyncpg
+fastapi
+fastembed
 langchain-core
 langchain-groq
+pgvector
+pypdf
+python-multipart
+python-dotenv
+sqlalchemy[asyncio]
+uvicorn[standard]

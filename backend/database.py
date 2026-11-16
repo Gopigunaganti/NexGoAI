@@ -19,6 +19,7 @@ engine = create_async_engine(
 
 async def create_tables():
     async with engine.begin() as connection:
+        await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await connection.run_sync(Base.metadata.create_all)
 async def test_database_connection():
     async with engine.connect() as connection:

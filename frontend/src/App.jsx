@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 
-const API_URL = "http://127.0.0.1:8000/api/v1";
+const API_URL = "/api/v1";
 
 async function fetchConversations() {
   const response = await fetch(`${API_URL}/conversations`, {
@@ -16,6 +16,27 @@ async function fetchConversations() {
   return data.conversations;
 }
 
+async function fetchDocuments() {
+  const response = await fetch(`${API_URL}/documents`);
+
+  if (!response.ok) {
+    throw new Error(`Backend returned HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data.documents;
+}
+
+async function responseError(response, fallback) {
+  try {
+    const data = await response.json();
+    if (typeof data.detail === "string") return data.detail;
+  } catch {
+    // Use the fallback for responses without a readable API error.
+  }
+  return fallback;
+}
+
 function App() {
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
@@ -25,6 +46,11 @@ function App() {
   const [conversations, setConversations] = useState([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState("");
+  const [documents, setDocuments] = useState([]);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState([]);
+  const [isDocumentsLoading, setIsDocumentsLoading] = useState(true);
+  const [isDocumentUploading, setIsDocumentUploading] = useState(false);
+  const [documentError, setDocumentError] = useState("");
   const [clearAllSuccess, setClearAllSuccess] = useState("");
   const [clearAllError, setClearAllError] = useState("");
   const [isClearAllDialogOpen, setIsClearAllDialogOpen] = useState(false);
@@ -60,6 +86,34 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDocuments() {
+      try {
+        const items = await fetchDocuments();
+        if (!cancelled) {
+          setDocuments(items);
+          setDocumentError("");
+        }
+      } catch (error) {
+        console.error("Could not load PDFs:", error);
+        if (!cancelled) {
+          setDocumentError("PDF documents could not be loaded.");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsDocumentsLoading(false);
+        }
+      }
+    }
+
+    loadDocuments();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function refreshConversations() {
     try {
       const items = await fetchConversations();
@@ -76,6 +130,7 @@ function App() {
     setMessage("");
     setChatTitle("New chat");
     setConversationId(null);
+    setSelectedDocumentIds([]);
     setClearAllSuccess("");
   }
 
@@ -96,6 +151,7 @@ function App() {
       const conversation = await response.json();
       setMessages(conversation.messages);
       setConversationId(conversation.conversation_id);
+      setSelectedDocumentIds([]);
       setChatTitle(
         conversations.find((item) => item.conversation_id === id)?.title ??
           "Chat"
@@ -106,6 +162,94 @@ function App() {
       setHistoryError("This conversation could not be opened.");
     } finally {
       setIsHistoryLoading(false);
+    }
+  }
+
+  async function handleUploadDocument(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setDocumentError("Choose a PDF file.");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setDocumentError("PDF files must be 10 MB or smaller.");
+      return;
+    }
+
+    setIsDocumentUploading(true);
+    setDocumentError("");
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const response = await fetch(`${API_URL}/documents`, {
+        method: "POST",
+        body,
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          await responseError(response, "The PDF could not be indexed.")
+        );
+      }
+
+      const document = await response.json();
+      setDocuments((previous) => [
+        document,
+        ...previous.filter((item) => item.id !== document.id),
+      ]);
+      if (selectedDocumentIds.length < 20) {
+        setSelectedDocumentIds((previous) =>
+          previous.includes(document.id) ? previous : [...previous, document.id]
+        );
+      } else {
+        setDocumentError(
+          "PDF indexed, but not selected: choose no more than 20 PDFs per chat."
+        );
+      }
+    } catch (error) {
+      setDocumentError(error.message || "The PDF could not be indexed.");
+    } finally {
+      setIsDocumentUploading(false);
+    }
+  }
+
+  function handleDocumentSelection(id) {
+    if (
+      !selectedDocumentIds.includes(id) &&
+      selectedDocumentIds.length >= 20
+    ) {
+      setDocumentError("Choose no more than 20 PDFs per chat.");
+      return;
+    }
+
+    setSelectedDocumentIds((previous) =>
+      previous.includes(id)
+        ? previous.filter((selectedId) => selectedId !== id)
+        : [...previous, id]
+    );
+    setDocumentError("");
+  }
+
+  async function handleDeleteDocument(id) {
+    setDocumentError("");
+    try {
+      const response = await fetch(`${API_URL}/documents/${id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        throw new Error(
+          await responseError(response, "The PDF could not be deleted.")
+        );
+      }
+      setDocuments((previous) => previous.filter((item) => item.id !== id));
+      setSelectedDocumentIds((previous) =>
+        previous.filter((selectedId) => selectedId !== id)
+      );
+    } catch (error) {
+      setDocumentError(error.message || "The PDF could not be deleted.");
     }
   }
 
@@ -128,6 +272,7 @@ function App() {
         setMessage("");
         setChatTitle("New chat");
         setConversationId(null);
+        setSelectedDocumentIds([]);
       }
 
       setHistoryError("");
@@ -155,6 +300,7 @@ function App() {
       setMessage("");
       setChatTitle("New chat");
       setConversationId(null);
+      setSelectedDocumentIds([]);
       setHistoryError("");
       setClearAllSuccess("All chats cleared.");
       setIsClearAllDialogOpen(false);
@@ -192,11 +338,14 @@ function App() {
         body: JSON.stringify({
           message: text,
           conversation_id: conversationId,
+          document_ids: selectedDocumentIds,
         }),
       });
 
       if (!response.ok) {
-        throw new Error(`Backend returned HTTP ${response.status}`);
+        throw new Error(
+          await responseError(response, `Backend returned HTTP ${response.status}`)
+        );
       }
 
       if (!response.body) {
@@ -287,7 +436,8 @@ function App() {
             ...updated[lastIndex],
             content:
               updated[lastIndex].content ||
-              "Sorry, I couldn't get a response. Check that the backend and Ollama are running, then try again.",
+              error.message ||
+              "Sorry, I couldn't get a response. Check that the backend is running and your Groq API key is configured, then try again.",
           };
         }
 
@@ -480,6 +630,78 @@ function App() {
         </section>
 
         <div className="composer-wrapper">
+          <section className="documents-panel" aria-label="PDF documents">
+            <div className="documents-heading">
+              <div>
+                <strong>PDF documents</strong>
+                <small>
+                  {selectedDocumentIds.length}/20 selected. No selection uses
+                  regular chat.
+                </small>
+              </div>
+              <label className="upload-pdf">
+                {isDocumentUploading ? "Indexing…" : "＋ Add PDF"}
+                <input
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  onChange={handleUploadDocument}
+                  disabled={isDocumentUploading}
+                  aria-label="Upload a PDF"
+                />
+              </label>
+            </div>
+
+            {isDocumentsLoading ? (
+              <p className="documents-empty">Loading PDFs…</p>
+            ) : documents.length > 0 ? (
+              <div className="document-list">
+                {documents.map((document) => (
+                  <div className="document-item" key={document.id}>
+                    <label
+                      className="document-choice"
+                      htmlFor={`document-${document.id}`}
+                      title={document.filename}
+                    >
+                      <input
+                        id={`document-${document.id}`}
+                        type="checkbox"
+                        checked={selectedDocumentIds.includes(document.id)}
+                        onChange={() => handleDocumentSelection(document.id)}
+                        disabled={
+                          isLoading ||
+                          (!selectedDocumentIds.includes(document.id) &&
+                            selectedDocumentIds.length >= 20)
+                        }
+                      />
+                      <span>{document.filename}</span>
+                      <small>{document.chunk_count} chunks</small>
+                    </label>
+                    <button
+                      className="delete-document"
+                      type="button"
+                      onClick={() => handleDeleteDocument(document.id)}
+                      disabled={isDocumentUploading}
+                      aria-label={`Delete ${document.filename}`}
+                      title="Delete PDF"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="documents-empty">
+                No PDFs yet. Upload a text-based PDF to get started.
+              </p>
+            )}
+
+            {documentError && (
+              <p className="document-error" role="alert">
+                {documentError}
+              </p>
+            )}
+          </section>
+
           <form
             className="composer"
             onSubmit={handleSubmit}
