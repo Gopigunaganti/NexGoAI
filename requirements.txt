@@ -1,6 +1,7 @@
 asyncpg
 fastapi
 fastembed
+langchain-core
 langchain-groq
 pgvector
 pypdf
