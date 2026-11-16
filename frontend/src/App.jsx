@@ -1,11 +1,29 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
-import { apiFetch } from "./auth";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import {
+  ArrowUp,
+  ArrowUpRight,
+  BookOpen,
+  Check,
+  ChevronDown,
+  Copy,
+  FileText,
+  Menu,
+  MessageSquare,
+  Paperclip,
+  Plus,
+  Search,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
 
 const API_URL = "/api/v1";
 
 async function fetchConversations() {
-  const response = await apiFetch(`${API_URL}/conversations`, {
+  const response = await fetch(`${API_URL}/conversations`, {
     cache: "no-store",
   });
 
@@ -18,7 +36,7 @@ async function fetchConversations() {
 }
 
 async function fetchDocuments() {
-  const response = await apiFetch(`${API_URL}/documents`);
+  const response = await fetch(`${API_URL}/documents`);
 
   if (!response.ok) {
     throw new Error(`Backend returned HTTP ${response.status}`);
@@ -38,9 +56,17 @@ async function responseError(response, fallback) {
   return fallback;
 }
 
-function App({ user, onSignOut }) {
-  const [documentsOpen, setDocumentsOpen] = useState(false);
+function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [documentsOpen, setDocumentsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [copied, setCopied] = useState(null);
+  const [chatError, setChatError] = useState("");
+  const composerRef = useRef(null);
+  const scrollRef = useRef(null);
+  const stickToBottom = useRef(true);
+  const dialogRef = useRef(null);
+  const clearButtonRef = useRef(null);
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
   const [chatTitle, setChatTitle] = useState("New chat");
@@ -117,6 +143,31 @@ function App({ user, onSignOut }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (stickToBottom.current && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    if (isClearAllDialogOpen) dialogRef.current?.showModal();
+    else dialogRef.current?.close();
+  }, [isClearAllDialogOpen]);
+
+  async function copyMessage(content, index) {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(index);
+    } catch {
+      setChatError("Copy is unavailable. Select the response text to copy it.");
+    }
+  }
+
+  function choosePrompt(prompt) {
+    setMessage(prompt);
+    composerRef.current?.focus();
+  }
+
   async function refreshConversations() {
     try {
       const items = await fetchConversations();
@@ -130,6 +181,10 @@ function App({ user, onSignOut }) {
 
   function handleNewChat() {
     setSidebarOpen(false);
+    if (composerRef.current) composerRef.current.style.height = "auto";
+    setChatError("");
+    setCopied(null);
+    composerRef.current?.focus();
     setMessages([]);
     setMessage("");
     setChatTitle("New chat");
@@ -146,7 +201,7 @@ function App({ user, onSignOut }) {
     setClearAllSuccess("");
 
     try {
-      const response = await apiFetch(`${API_URL}/conversations/${id}`);
+      const response = await fetch(`${API_URL}/conversations/${id}`);
 
       if (!response.ok) {
         throw new Error(`Backend returned HTTP ${response.status}`);
@@ -154,12 +209,15 @@ function App({ user, onSignOut }) {
 
       const conversation = await response.json();
       setSidebarOpen(false);
+      setChatError("");
+      setCopied(null);
+      stickToBottom.current = true;
       setMessages(conversation.messages);
       setConversationId(conversation.conversation_id);
       setSelectedDocumentIds([]);
       setChatTitle(
         conversations.find((item) => item.conversation_id === id)?.title ??
-          "Chat"
+          "Chat",
       );
       setMessage("");
     } catch (error) {
@@ -189,14 +247,14 @@ function App({ user, onSignOut }) {
     try {
       const body = new FormData();
       body.append("file", file);
-      const response = await apiFetch(`${API_URL}/documents`, {
+      const response = await fetch(`${API_URL}/documents`, {
         method: "POST",
         body,
       });
 
       if (!response.ok) {
         throw new Error(
-          await responseError(response, "The PDF could not be indexed.")
+          await responseError(response, "The PDF could not be indexed."),
         );
       }
 
@@ -207,11 +265,13 @@ function App({ user, onSignOut }) {
       ]);
       if (selectedDocumentIds.length < 20) {
         setSelectedDocumentIds((previous) =>
-          previous.includes(document.id) ? previous : [...previous, document.id]
+          previous.includes(document.id)
+            ? previous
+            : [...previous, document.id],
         );
       } else {
         setDocumentError(
-          "PDF indexed, but not selected: choose no more than 20 PDFs per chat."
+          "PDF indexed, but not selected: choose no more than 20 PDFs per chat.",
         );
       }
     } catch (error) {
@@ -222,10 +282,7 @@ function App({ user, onSignOut }) {
   }
 
   function handleDocumentSelection(id) {
-    if (
-      !selectedDocumentIds.includes(id) &&
-      selectedDocumentIds.length >= 20
-    ) {
+    if (!selectedDocumentIds.includes(id) && selectedDocumentIds.length >= 20) {
       setDocumentError("Choose no more than 20 PDFs per chat.");
       return;
     }
@@ -233,7 +290,7 @@ function App({ user, onSignOut }) {
     setSelectedDocumentIds((previous) =>
       previous.includes(id)
         ? previous.filter((selectedId) => selectedId !== id)
-        : [...previous, id]
+        : [...previous, id],
     );
     setDocumentError("");
   }
@@ -241,17 +298,17 @@ function App({ user, onSignOut }) {
   async function handleDeleteDocument(id) {
     setDocumentError("");
     try {
-      const response = await apiFetch(`${API_URL}/documents/${id}`, {
+      const response = await fetch(`${API_URL}/documents/${id}`, {
         method: "DELETE",
       });
       if (!response.ok) {
         throw new Error(
-          await responseError(response, "The PDF could not be deleted.")
+          await responseError(response, "The PDF could not be deleted."),
         );
       }
       setDocuments((previous) => previous.filter((item) => item.id !== id));
       setSelectedDocumentIds((previous) =>
-        previous.filter((selectedId) => selectedId !== id)
+        previous.filter((selectedId) => selectedId !== id),
       );
     } catch (error) {
       setDocumentError(error.message || "The PDF could not be deleted.");
@@ -260,7 +317,7 @@ function App({ user, onSignOut }) {
 
   async function handleDeleteConversation(id) {
     try {
-      const response = await apiFetch(`${API_URL}/conversations/${id}`, {
+      const response = await fetch(`${API_URL}/conversations/${id}`, {
         method: "DELETE",
       });
 
@@ -269,7 +326,7 @@ function App({ user, onSignOut }) {
       }
 
       setConversations((previous) =>
-        previous.filter((item) => item.conversation_id !== id)
+        previous.filter((item) => item.conversation_id !== id),
       );
 
       if (conversationId === id) {
@@ -292,7 +349,7 @@ function App({ user, onSignOut }) {
     setClearAllError("");
 
     try {
-      const response = await apiFetch(`${API_URL}/conversations`, {
+      const response = await fetch(`${API_URL}/conversations`, {
         method: "DELETE",
       });
 
@@ -325,6 +382,9 @@ function App({ user, onSignOut }) {
 
     setMessage("");
     setIsLoading(true);
+    setChatError("");
+    setCopied(null);
+    stickToBottom.current = true;
     setChatTitle(text.slice(0, 28));
     setClearAllSuccess("");
 
@@ -335,7 +395,7 @@ function App({ user, onSignOut }) {
     ]);
 
     try {
-      const response = await apiFetch(`${API_URL}/chat/stream`, {
+      const response = await fetch(`${API_URL}/chat/stream`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -349,7 +409,10 @@ function App({ user, onSignOut }) {
 
       if (!response.ok) {
         throw new Error(
-          await responseError(response, `Backend returned HTTP ${response.status}`)
+          await responseError(
+            response,
+            `Backend returned HTTP ${response.status}`,
+          ),
         );
       }
 
@@ -398,7 +461,7 @@ function App({ user, onSignOut }) {
           updateAssistantMessage(data.text);
         } else if (eventName === "error") {
           streamError = new Error(
-            data.detail || "The AI service encountered an error."
+            data.detail || "The AI service encountered an error.",
           );
         }
       }
@@ -431,6 +494,10 @@ function App({ user, onSignOut }) {
       await refreshConversations();
     } catch (error) {
       console.error("Chat request failed:", error);
+      setChatError(
+        error.message ||
+          "The response could not be completed. Please try again.",
+      );
 
       setMessages((previous) => {
         const updated = [...previous];
@@ -453,165 +520,228 @@ function App({ user, onSignOut }) {
     }
   }
 
+  const visibleConversations = conversations.filter((item) =>
+    item.title.toLowerCase().includes(search.toLowerCase()),
+  );
+  const prompts = [
+    {
+      icon: BookOpen,
+      title: "Understand something",
+      description: "Make complex ideas feel simple",
+      prompt: "Explain Python async programming with a practical example.",
+    },
+    {
+      icon: FileText,
+      title: "Explore a document",
+      description: "Find the details that matter",
+      prompt: "Summarize the key takeaways from my selected documents.",
+    },
+    {
+      icon: Sparkles,
+      title: "Build on an idea",
+      description: "Turn a thought into a plan",
+      prompt:
+        "Help me design a FastAPI project. Ask me about my requirements first.",
+    },
+  ];
 
   return (
-    <div className={`app${sidebarOpen ? " sidebar-open" : ""}`}>
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-icon">N</div>
-          <span>NexGoAI</span>
-        </div>
-
+    <div className="workspace">
+      {sidebarOpen && (
+        <button
+          className="sidebar-scrim"
+          aria-label="Close navigation"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      <aside
+        className={`sidebar ${sidebarOpen ? "is-open" : ""}`}
+        aria-label="Workspace navigation"
+      >
+        <a
+          className="brand"
+          href="#"
+          onClick={(event) => {
+            event.preventDefault();
+            if (!isLoading) handleNewChat();
+          }}
+        >
+          <span className="brand-mark">
+            <Sparkles size={20} />
+          </span>
+          NexGo<span>AI</span>
+        </a>
         <button
           className="new-chat"
           onClick={handleNewChat}
           disabled={isLoading}
         >
-          <span>＋</span> New chat
+          <Plus size={18} /> New conversation <span>↗</span>
         </button>
-
-        <button
-          className="clear-all-chats"
-          onClick={() => {
-            setClearAllError("");
-            setIsClearAllDialogOpen(true);
-          }}
-          disabled={isLoading || isHistoryLoading || isClearingAllChats}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M3 6h18" />
-            <path d="M8 6V4h8v2" />
-            <path d="m19 6-1 14H6L5 6" />
-            <path d="M10 11v5" />
-            <path d="M14 11v5" />
-          </svg>
-          <span>Clear All Chats</span>
-        </button>
-
-        <p className="sidebar-label">YOUR WORKSPACE</p>
-
-        <div className="conversation-list">
-          {isHistoryLoading && conversations.length === 0 ? (
-            <p className="empty-history">Loading chats…</p>
-          ) : conversations.length > 0 ? (
-            conversations.map((conversation) => (
-              <div
-                className={`history-item${
-                  conversation.conversation_id === conversationId
-                    ? " active"
-                    : ""
-                }`}
-                key={conversation.conversation_id}
-              >
-                <button
-                  className="history-select"
-                  onClick={() =>
-                    handleSelectConversation(conversation.conversation_id)
-                  }
-                  disabled={isLoading || isHistoryLoading}
-                  title={conversation.title}
-                >
-                  <span>◷</span>
-                  <span>{conversation.title}</span>
-                </button>
-
-                <button
-                  className="delete-chat"
-                  onClick={() =>
-                    handleDeleteConversation(conversation.conversation_id)
-                  }
-                  disabled={isLoading}
-                  title="Delete conversation"
-                  aria-label={`Delete ${conversation.title}`}
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.7"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M3 6h18" />
-                    <path d="M8 6V4h8v2" />
-                    <path d="m19 6-1 14H6L5 6" />
-                    <path d="M10 11v5" />
-                    <path d="M14 11v5" />
-                  </svg>
-                </button>
-
-              </div>
-            ))
-          ) : (
-            <p className="empty-history">No saved chats yet.</p>
+        <label className="history-search">
+          <Search size={16} />
+          <input
+            aria-label="Search conversations"
+            placeholder="Search your chats"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </label>
+        <div className="section-label">
+          CONVERSATIONS <span>{conversations.length}</span>
+        </div>
+        <nav className="conversation-list" aria-label="Conversations">
+          {isHistoryLoading && (
+            <p className="muted" role="status">
+              Loading conversations…
+            </p>
           )}
+          {!isHistoryLoading && visibleConversations.length === 0 && (
+            <div className="history-empty">
+              <MessageSquare size={22} />
+              <p>{search ? "No matching conversations" : "A fresh start"}</p>
+              <small>
+                {search
+                  ? "Try another search."
+                  : "Your conversations will appear here."}
+              </small>
+            </div>
+          )}
+          {visibleConversations.map((item) => (
+            <div
+              className={`history-item ${conversationId === item.conversation_id ? "active" : ""}`}
+              key={item.conversation_id}
+            >
+              <button
+                className="history-select"
+                disabled={isLoading || isHistoryLoading}
+                onClick={() => handleSelectConversation(item.conversation_id)}
+                aria-current={
+                  conversationId === item.conversation_id ? "page" : undefined
+                }
+              >
+                <MessageSquare size={15} />
+                <span>{item.title}</span>
+              </button>
+              <button
+                className="icon-button delete-chat"
+                aria-label={`Delete ${item.title}`}
+                disabled={isLoading}
+                onClick={() => handleDeleteConversation(item.conversation_id)}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
           {historyError && (
-            <p className="empty-history" role="alert">
+            <p className="error" role="alert">
               {historyError}
             </p>
           )}
           {clearAllSuccess && (
-            <p className="clear-all-success" role="status">
+            <p className="success" role="status">
               {clearAllSuccess}
             </p>
           )}
-        </div>
-
-        <div className="sidebar-footer">
-          <div className="avatar">{(user.email || user.phone || "U")[0].toUpperCase()}</div>
-          <div>
-            <strong title={user.email || user.phone}>{user.email || user.phone}</strong>
-            <button className="sign-out" onClick={onSignOut}>Sign out</button>
+        </nav>
+        <div className="sidebar-bottom">
+          <button
+            className="nav-action"
+            onClick={() => {
+              setDocumentsOpen(true);
+              setSidebarOpen(false);
+            }}
+          >
+            <BookOpen size={17} /> Document library{" "}
+            <span>{documents.length}</span>
+          </button>
+          <button
+            ref={clearButtonRef}
+            className="nav-action"
+            disabled={isLoading || isHistoryLoading || !conversations.length}
+            onClick={() => {
+              setClearAllError("");
+              setIsClearAllDialogOpen(true);
+            }}
+          >
+            <Trash2 size={16} /> Clear conversations
+          </button>
+          <div className="workspace-profile">
+            <span className="profile-icon">N</span>
+            <div>
+              <strong>Personal workspace</strong>
+              <small>Chat & document library</small>
+            </div>
           </div>
         </div>
       </aside>
 
-      <main className="main">
+      <main className={`main ${messages.length === 0 ? "is-empty" : ""}`}>
         <header className="topbar">
-          <div>
-            <button className="mobile-menu" aria-label="Toggle navigation" onClick={() => setSidebarOpen(!sidebarOpen)}>☰</button>
+          <div className="topbar-title">
+            <button
+              className="icon-button mobile-menu"
+              aria-label="Open navigation"
+              aria-expanded={sidebarOpen}
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+            >
+              <Menu size={20} />
+            </button>
+            <span className="breadcrumb">
+              Workspace <span>/</span>
+            </span>
             <strong>{chatTitle}</strong>
-            <small>Personal workspace</small>
           </div>
-          <button className="documents-toggle" aria-expanded={documentsOpen} onClick={() => setDocumentsOpen(!documentsOpen)}>Documents {selectedDocumentIds.length > 0 ? `(${selectedDocumentIds.length})` : ""}</button>
+          <button
+            className={`document-button ${documentsOpen ? "selected" : ""}`}
+            aria-expanded={documentsOpen}
+            onClick={() => setDocumentsOpen(!documentsOpen)}
+          >
+            <BookOpen size={16} />
+            <span>Documents</span>
+            <span className="count">{documents.length}</span>
+          </button>
         </header>
-
-        <section className="chat-area">
+        <section
+          className="chat-scroll"
+          ref={scrollRef}
+          onScroll={(event) => {
+            const el = event.currentTarget;
+            stickToBottom.current =
+              el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+          }}
+          aria-label="Chat messages"
+        >
           {messages.length === 0 ? (
             <div className="welcome">
-              <div className="welcome-icon">✳</div>
-              <p className="eyebrow">A LITTLE CURIOSITY GOES A LONG WAY</p>
-              <h1>Where should we begin?</h1>
+              <div className="welcome-emblem">
+                <Sparkles size={30} strokeWidth={1.4} />
+              </div>
+              <h1>
+                Your next idea starts here.
+                <br />
+                <span>Let’s make it happen.</span>
+              </h1>
               <p>
-                Explore an idea, untangle a problem, or ask your documents.
+                A thoughtful space to ask questions, explore documents, and
+                create.
               </p>
-
               <div className="suggestions">
-                {[
-                  "Explain Python async programming",
-                  "What is Retrieval-Augmented Generation?",
-                  "Help me design a FastAPI project",
-                ].map((suggestion) => (
+                {prompts.map(({ icon: Icon, title, description, prompt }) => (
                   <button
-                    key={suggestion}
-                    onClick={() => setMessage(suggestion)}
+                    key={title}
+                    onClick={() => {
+                      choosePrompt(prompt);
+                      if (title === "Explore a document")
+                        setDocumentsOpen(true);
+                    }}
                   >
-                    <span>✧</span>
-                    {suggestion}
-                    <span className="suggestion-arrow">↗</span>
+                    <span className="suggestion-top">
+                      <Icon size={21} strokeWidth={1.5} />
+                      <ArrowUpRight size={15} />
+                    </span>
+                    <strong>{title}</strong>
+                    <small>{description}</small>
                   </button>
                 ))}
               </div>
@@ -619,180 +749,304 @@ function App({ user, onSignOut }) {
           ) : (
             <div className="messages">
               {messages.map((item, index) => (
-                <div className="message-row" key={index}>
-                  <div className="message-avatar">
-                    {item.role === "user" ? "You" : "N"}
+                <article className={`message ${item.role}`} key={index}>
+                  <div className="message-label">
+                    {item.role === "user" ? (
+                      <span className="user-mark">Y</span>
+                    ) : (
+                      <span className="assistant-mark">
+                        <Sparkles size={16} />
+                      </span>
+                    )}
+                    <strong>{item.role === "user" ? "You" : "NexGoAI"}</strong>
                   </div>
-                  <div className="message-content">
-                    <strong>
-                      {item.role === "user" ? "You" : "NexGoAI"}
-                    </strong>
-                    <p>{item.content}</p>
+                  <div className="message-body">
+                    {item.content ? (
+                      <Markdown remarkPlugins={[remarkGfm]}>
+                        {item.content}
+                      </Markdown>
+                    ) : isLoading ? (
+                      <span className="thinking" role="status">
+                        Thinking<span>● ● ●</span>
+                      </span>
+                    ) : null}
                   </div>
-                </div>
+                  {item.role === "assistant" &&
+                    item.content &&
+                    !(isLoading && index === messages.length - 1) && (
+                      <button
+                        className="copy-button"
+                        onClick={() => copyMessage(item.content, index)}
+                      >
+                        {copied === index ? (
+                          <Check size={14} />
+                        ) : (
+                          <Copy size={14} />
+                        )}
+                        {copied === index ? "Copied" : "Copy response"}
+                      </button>
+                    )}
+                </article>
               ))}
             </div>
           )}
         </section>
-
         <div className="composer-wrapper">
-          <section className="documents-panel" aria-label="PDF documents" hidden={!documentsOpen}>
-            <div className="documents-heading">
-              <div>
-                <strong>PDF documents</strong>
-                <small>
-                  {selectedDocumentIds.length}/20 selected. No selection uses
-                  regular chat.
-                </small>
-              </div>
-              <label className="upload-pdf">
-                {isDocumentUploading ? "Indexing…" : "＋ Add PDF"}
-                <input
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  onChange={handleUploadDocument}
-                  disabled={isDocumentUploading}
-                  aria-label="Upload a PDF"
-                />
-              </label>
+          {chatError && (
+            <div className="error-banner" role="alert">
+              {chatError}
+              <button
+                className="icon-button"
+                aria-label="Dismiss error"
+                onClick={() => setChatError("")}
+              >
+                <X size={16} />
+              </button>
             </div>
-
-            {isDocumentsLoading ? (
-              <p className="documents-empty">Loading PDFs…</p>
-            ) : documents.length > 0 ? (
-              <div className="document-list">
-                {documents.map((document) => (
-                  <div className="document-item" key={document.id}>
-                    <label
-                      className="document-choice"
-                      htmlFor={`document-${document.id}`}
-                      title={document.filename}
-                    >
-                      <input
-                        id={`document-${document.id}`}
-                        type="checkbox"
-                        checked={selectedDocumentIds.includes(document.id)}
-                        onChange={() => handleDocumentSelection(document.id)}
-                        disabled={
-                          isLoading ||
-                          (!selectedDocumentIds.includes(document.id) &&
-                            selectedDocumentIds.length >= 20)
-                        }
-                      />
-                      <span>{document.filename}</span>
-                      <small>PDF</small>
-                    </label>
-                    <button
-                      className="delete-document"
-                      type="button"
-                      onClick={() => handleDeleteDocument(document.id)}
-                      disabled={isDocumentUploading || isLoading}
-                      aria-label={`Delete ${document.filename}`}
-                      title="Delete PDF"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
+          )}
+          <form className="composer" onSubmit={handleSubmit}>
+            {selectedDocumentIds.length > 0 && (
+              <div className="attachment-chips">
+                {documents
+                  .filter((doc) => selectedDocumentIds.includes(doc.id))
+                  .map((doc) => (
+                    <span key={doc.id}>
+                      <FileText size={13} />
+                      <span>{doc.filename}</span>
+                      <button
+                        type="button"
+                        aria-label={`Deselect ${doc.filename}`}
+                        disabled={isLoading}
+                        onClick={() => handleDocumentSelection(doc.id)}
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
               </div>
-            ) : (
-              <p className="documents-empty">
-                No PDFs yet. Upload a text-based PDF to get started.
-              </p>
             )}
-
-            {documentError && (
-              <p className="document-error" role="alert">
-                {documentError}
-              </p>
-            )}
-          </section>
-
-          <form
-            className="composer"
-            onSubmit={handleSubmit}
-          >
             <textarea
+              ref={composerRef}
+              aria-label="Message NexGoAI"
               value={message}
-              onChange={(event) => setMessage(event.target.value)}
+              onChange={(event) => {
+                setMessage(event.target.value);
+                event.target.style.height = "auto";
+                event.target.style.height = `${Math.min(event.target.scrollHeight, 180)}px`;
+              }}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
+                if (
+                  event.key === "Enter" &&
+                  !event.shiftKey &&
+                  !event.nativeEvent.isComposing
+                ) {
                   event.preventDefault();
                   event.currentTarget.form.requestSubmit();
                 }
               }}
-              placeholder="Message NexGoAI..."
-              rows={1}
+              placeholder={
+                selectedDocumentIds.length
+                  ? "Ask about your selected documents…"
+                  : "What’s on your mind?"
+              }
+              rows={2}
             />
-
-            <div className="composer-bottom">
-              <span>↵ Enter to send · Shift + Enter for a new line</span>
+            <div className="composer-toolbar">
               <button
-                  type="submit"
-                  className="send-button"
-                  disabled={!message.trim() || isLoading}
-                  aria-label="Send message"
-                >
-                  {isLoading ? "…" : "↑"}
-                </button>
+                className="attach-button"
+                type="button"
+                onClick={() => setDocumentsOpen(!documentsOpen)}
+                aria-expanded={documentsOpen}
+              >
+                <Paperclip size={17} /> Attach PDFs
+              </button>
+              <button
+                type="button"
+                className="composer-context"
+                onClick={() => setDocumentsOpen(!documentsOpen)}
+                aria-expanded={documentsOpen}
+              >
+                {selectedDocumentIds.length
+                  ? `${selectedDocumentIds.length} selected`
+                  : "General chat"}
+                <ChevronDown size={12} />
+              </button>
+              <button
+                className="send-button"
+                disabled={!message.trim() || isLoading || isHistoryLoading}
+                aria-label={isLoading ? "Generating response" : "Send message"}
+              >
+                {isLoading ? (
+                  <span className="spinner" />
+                ) : (
+                  <ArrowUp size={20} />
+                )}
+              </button>
             </div>
           </form>
-
-          <p className="disclaimer">
-            AI can make mistakes. Verify important information.
+          <p className="composer-hint">
+            <span>Enter to send · Shift + Enter for a new line</span>
+            <span>AI can make mistakes. Check important details.</span>
           </p>
         </div>
       </main>
-
-      {isClearAllDialogOpen && (
-        <div className="clear-all-backdrop">
-          <section
-            className="clear-all-dialog"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="clear-all-title"
-            aria-describedby="clear-all-description"
-            aria-busy={isClearingAllChats}
-            onKeyDown={(event) => {
-              if (event.key === "Escape" && !isClearingAllChats) {
-                setIsClearAllDialogOpen(false);
-              }
-            }}
-          >
-            <h2 id="clear-all-title">Clear all chats?</h2>
-            <p id="clear-all-description">
-              This will permanently delete all conversations and their
-              associated data. This action cannot be undone.
-            </p>
-            {clearAllError && (
-              <p className="clear-all-error" role="alert">
-                {clearAllError}
-              </p>
-            )}
-            <div className="clear-all-actions">
-              <button
-                type="button"
-                className="clear-all-cancel"
-                onClick={() => setIsClearAllDialogOpen(false)}
-                disabled={isClearingAllChats}
-                autoFocus
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="clear-all-confirm"
-                onClick={handleClearAllChats}
-                disabled={isClearingAllChats}
-              >
-                {isClearingAllChats ? "Clearing…" : "Clear All"}
-              </button>
+      {documentsOpen && (
+        <aside className="documents-drawer" aria-label="Document library">
+          <header>
+            <div>
+              <span className="section-label">YOUR KNOWLEDGE</span>
+              <h2>Documents</h2>
             </div>
-          </section>
-        </div>
+            <button
+              className="icon-button"
+              aria-label="Close documents"
+              onClick={() => setDocumentsOpen(false)}
+            >
+              <X size={19} />
+            </button>
+          </header>
+          <p className="drawer-description">
+            Add PDFs and select the ones you want to explore in this
+            conversation.
+          </p>
+          <label
+            className={`upload-zone ${isDocumentUploading ? "uploading" : ""}`}
+          >
+            <span className="upload-icon">
+              {isDocumentUploading ? (
+                <span className="spinner" />
+              ) : (
+                <Plus size={24} />
+              )}
+            </span>
+            <strong>
+              {isDocumentUploading ? "Indexing your document…" : "Add a PDF"}
+            </strong>
+            <small>Text-based PDFs · Up to 10 MB</small>
+            <input
+              type="file"
+              accept=".pdf,application/pdf"
+              onChange={handleUploadDocument}
+              disabled={isDocumentUploading || isLoading}
+              aria-label="Upload PDF"
+            />
+          </label>
+          <div className="library-heading">
+            <strong>
+              Library <span>{documents.length}</span>
+            </strong>
+            <small>{selectedDocumentIds.length}/20 selected</small>
+          </div>
+          <div className="document-list">
+            {isDocumentsLoading ? (
+              <p role="status" className="muted">
+                Loading documents…
+              </p>
+            ) : documents.length === 0 ? (
+              <div className="documents-empty">
+                <FileText size={28} />
+                <strong>Your knowledge starts here</strong>
+                <p>
+                  Upload a PDF to ask questions and find answers in its pages.
+                </p>
+              </div>
+            ) : (
+              documents.map((doc) => (
+                <div
+                  className={`document-item ${selectedDocumentIds.includes(doc.id) ? "checked" : ""}`}
+                  key={doc.id}
+                >
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={selectedDocumentIds.includes(doc.id)}
+                      disabled={
+                        isLoading ||
+                        (!selectedDocumentIds.includes(doc.id) &&
+                          selectedDocumentIds.length >= 20)
+                      }
+                      onChange={() => handleDocumentSelection(doc.id)}
+                    />
+                    <FileText size={20} />
+                    <span>
+                      <strong title={doc.filename}>{doc.filename}</strong>
+                      <small>PDF document</small>
+                    </span>
+                  </label>
+                  <button
+                    className="icon-button"
+                    aria-label={`Delete ${doc.filename}`}
+                    disabled={isLoading || isDocumentUploading}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          `Delete ${doc.filename}? This removes the PDF from your library.`,
+                        )
+                      )
+                        handleDeleteDocument(doc.id);
+                    }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+          {documentError && (
+            <p className="error" role="alert">
+              {documentError}
+            </p>
+          )}
+          <div className="library-note">
+            <BookOpen size={16} />
+            <p>
+              Selected documents give your conversation context. Deselect all to
+              return to general chat.
+            </p>
+          </div>
+        </aside>
       )}
+      <dialog
+        ref={dialogRef}
+        className="confirm-dialog"
+        onCancel={(event) => {
+          if (isClearingAllChats) event.preventDefault();
+          else setIsClearAllDialogOpen(false);
+        }}
+        onClose={() => {
+          setIsClearAllDialogOpen(false);
+          clearButtonRef.current?.focus();
+        }}
+        aria-labelledby="clear-title"
+      >
+        <div className="danger-icon">
+          <Trash2 size={24} />
+        </div>
+        <h2 id="clear-title">Clear your conversations?</h2>
+        <p>All saved chats and messages will be permanently deleted.</p>
+        {clearAllError && (
+          <p className="error" role="alert">
+            {clearAllError}
+          </p>
+        )}
+        <div className="dialog-actions">
+          <button
+            disabled={isClearingAllChats}
+            onClick={() => setIsClearAllDialogOpen(false)}
+            autoFocus
+          >
+            Keep conversations
+          </button>
+          <button
+            className="danger-button"
+            disabled={isClearingAllChats}
+            onClick={handleClearAllChats}
+          >
+            {isClearingAllChats ? "Clearing…" : "Clear all"}
+          </button>
+        </div>
+      </dialog>
     </div>
   );
 }
-
 export default App;
