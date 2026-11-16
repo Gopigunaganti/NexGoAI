@@ -1,0 +1,10 @@
+asyncpg
+fastapi
+fastembed
+langchain-groq
+pgvector
+pypdf
+python-multipart
+python-dotenv
+sqlalchemy[asyncio]
+uvicorn[standard]

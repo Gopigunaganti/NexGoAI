@@ -1,16 +1,31 @@
 import asyncio
 import json
 import logging
+from pathlib import Path
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db_session import AsyncSessionLocal, get_db
-from backend.models import Conversation, Message
+from backend.embeddings import EMBEDDING_MODEL, embed_documents
+from backend.models import Conversation, Document, DocumentChunk, Message
+from backend.pdf_processing import (
+    MAX_PDF_SIZE_BYTES,
+    PDFProcessingError,
+    PDFTooLargeError,
+    extract_pdf_chunks,
+    validate_pdf_upload,
+)
+from backend.retrieval import (
+    format_context,
+    format_source_citations,
+    retrieve_relevant_chunks,
+)
 from backend.schemas import ChatRequest, ChatResponse
 from backend.services import MODEL_NAME, generate_response, stream_response
 
@@ -28,6 +43,29 @@ app.add_middleware(
 )
 
 MAX_HISTORY_MESSAGES = 10
+
+
+async def load_document_context(
+    db: AsyncSession,
+    request: ChatRequest,
+) -> tuple[str, str]:
+    try:
+        chunks = await retrieve_relevant_chunks(
+            db,
+            request.message,
+            request.document_ids,
+        )
+    except Exception as exc:
+        logger.exception("Document retrieval or embedding generation failed.")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Document search is unavailable. Check that the local "
+                f"{EMBEDDING_MODEL} embedding model can be loaded."
+            ),
+        ) from exc
+
+    return format_context(chunks), format_source_citations(chunks)
 
 
 async def load_history(
@@ -81,6 +119,122 @@ def health_check():
     return {"status": "healthy"}
 
 
+@app.get("/api/v1/documents")
+async def list_documents(
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(
+            Document.id,
+            Document.filename,
+            Document.created_at,
+            func.count(DocumentChunk.id).label("chunk_count"),
+        )
+        .outerjoin(DocumentChunk, DocumentChunk.document_id == Document.id)
+        .group_by(Document.id)
+        .order_by(Document.created_at.desc())
+    )
+    return {
+        "documents": [
+            {
+                "id": row.id,
+                "filename": row.filename,
+                "created_at": row.created_at,
+                "chunk_count": row.chunk_count,
+            }
+            for row in result.all()
+        ]
+    }
+
+
+@app.post("/api/v1/documents", status_code=201)
+async def upload_document(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        content = await file.read(MAX_PDF_SIZE_BYTES + 1)
+        filename = validate_pdf_upload(
+            file.filename or "",
+            file.content_type,
+            content,
+        )
+        chunks = extract_pdf_chunks(content)
+    except PDFProcessingError as exc:
+        status_code = 413 if isinstance(exc, PDFTooLargeError) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    finally:
+        await file.close()
+
+    try:
+        vectors = await asyncio.to_thread(
+            embed_documents,
+            [chunk.content for chunk in chunks],
+        )
+        if len(vectors) != len(chunks):
+            raise ValueError("The embedding service returned an incomplete batch.")
+    except Exception as exc:
+        logger.exception("PDF embedding generation failed.")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "PDF indexing is unavailable. Check that the local "
+                f"{EMBEDDING_MODEL} embedding model can be loaded. On first "
+                "use, the model may need to be downloaded."
+            ),
+        ) from exc
+
+    document = Document(id=str(uuid4()), filename=filename)
+    document.chunks = [
+        DocumentChunk(
+            page_number=chunk.page_number,
+            content=chunk.content,
+            embedding=vector,
+        )
+        for chunk, vector in zip(chunks, vectors)
+    ]
+    db.add(document)
+
+    try:
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("PDF document storage failed.")
+        raise HTTPException(
+            status_code=503,
+            detail="The document could not be saved to the vector database.",
+        ) from exc
+
+    return {
+        "id": document.id,
+        "filename": document.filename,
+        "chunk_count": len(chunks),
+    }
+
+
+@app.delete("/api/v1/documents/{document_id}")
+async def delete_document(
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    document = await db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    try:
+        await db.delete(document)
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.error("PDF document deletion failed.")
+        raise HTTPException(
+            status_code=503,
+            detail="The document could not be deleted.",
+        ) from exc
+
+    return {"message": "Document deleted successfully."}
+
+
 @app.post("/api/v1/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
@@ -92,11 +246,14 @@ async def chat(
         history = (await load_history(db, conversation_id))[
             -MAX_HISTORY_MESSAGES:
         ]
+        context, citations = await load_document_context(db, request)
 
         answer = await asyncio.to_thread(
             generate_response,
             message=request.message,
             history=history,
+            context=context,
+            citations=citations,
         )
 
         await save_exchange(
@@ -111,6 +268,8 @@ async def chat(
             model=MODEL_NAME,
         )
 
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("Chat request failed")
         raise HTTPException(
@@ -187,6 +346,9 @@ async def chat_stream(
         history = (await load_history(db, conversation_id))[
             -MAX_HISTORY_MESSAGES:
         ]
+        context, citations = await load_document_context(db, request)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("Failed to load conversation history")
         raise HTTPException(
@@ -203,7 +365,14 @@ async def chat_stream(
         }) + "\n\n"
 
         try:
-            iterator = iter(stream_response(request.message, history))
+            iterator = iter(
+                stream_response(
+                    request.message,
+                    history,
+                    context=context,
+                    citations=citations,
+                )
+            )
 
             while True:
                 has_chunk, chunk = await asyncio.to_thread(
@@ -243,3 +412,8 @@ async def chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
