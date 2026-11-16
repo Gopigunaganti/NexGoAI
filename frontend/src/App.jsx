@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import "./App.css";
+import { apiFetch } from "./auth";
 
 const API_URL = "/api/v1";
 
 async function fetchConversations() {
-  const response = await fetch(`${API_URL}/conversations`, {
+  const response = await apiFetch(`${API_URL}/conversations`, {
     cache: "no-store",
   });
 
@@ -17,7 +18,7 @@ async function fetchConversations() {
 }
 
 async function fetchDocuments() {
-  const response = await fetch(`${API_URL}/documents`);
+  const response = await apiFetch(`${API_URL}/documents`);
 
   if (!response.ok) {
     throw new Error(`Backend returned HTTP ${response.status}`);
@@ -37,7 +38,9 @@ async function responseError(response, fallback) {
   return fallback;
 }
 
-function App() {
+function App({ user, onSignOut }) {
+  const [documentsOpen, setDocumentsOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
   const [chatTitle, setChatTitle] = useState("New chat");
@@ -126,6 +129,7 @@ function App() {
   }
 
   function handleNewChat() {
+    setSidebarOpen(false);
     setMessages([]);
     setMessage("");
     setChatTitle("New chat");
@@ -142,13 +146,14 @@ function App() {
     setClearAllSuccess("");
 
     try {
-      const response = await fetch(`${API_URL}/conversations/${id}`);
+      const response = await apiFetch(`${API_URL}/conversations/${id}`);
 
       if (!response.ok) {
         throw new Error(`Backend returned HTTP ${response.status}`);
       }
 
       const conversation = await response.json();
+      setSidebarOpen(false);
       setMessages(conversation.messages);
       setConversationId(conversation.conversation_id);
       setSelectedDocumentIds([]);
@@ -184,7 +189,7 @@ function App() {
     try {
       const body = new FormData();
       body.append("file", file);
-      const response = await fetch(`${API_URL}/documents`, {
+      const response = await apiFetch(`${API_URL}/documents`, {
         method: "POST",
         body,
       });
@@ -236,7 +241,7 @@ function App() {
   async function handleDeleteDocument(id) {
     setDocumentError("");
     try {
-      const response = await fetch(`${API_URL}/documents/${id}`, {
+      const response = await apiFetch(`${API_URL}/documents/${id}`, {
         method: "DELETE",
       });
       if (!response.ok) {
@@ -255,7 +260,7 @@ function App() {
 
   async function handleDeleteConversation(id) {
     try {
-      const response = await fetch(`${API_URL}/conversations/${id}`, {
+      const response = await apiFetch(`${API_URL}/conversations/${id}`, {
         method: "DELETE",
       });
 
@@ -287,7 +292,7 @@ function App() {
     setClearAllError("");
 
     try {
-      const response = await fetch(`${API_URL}/conversations`, {
+      const response = await apiFetch(`${API_URL}/conversations`, {
         method: "DELETE",
       });
 
@@ -330,7 +335,7 @@ function App() {
     ]);
 
     try {
-      const response = await fetch(`${API_URL}/chat/stream`, {
+      const response = await apiFetch(`${API_URL}/chat/stream`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -450,7 +455,7 @@ function App() {
 
 
   return (
-    <div className="app">
+    <div className={`app${sidebarOpen ? " sidebar-open" : ""}`}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-icon">N</div>
@@ -566,10 +571,10 @@ function App() {
         </div>
 
         <div className="sidebar-footer">
-          <div className="avatar">G</div>
+          <div className="avatar">{(user.email || user.phone || "U")[0].toUpperCase()}</div>
           <div>
-            <strong>My Workspace</strong>
-            <small>Local AI Assistant</small>
+            <strong title={user.email || user.phone}>{user.email || user.phone}</strong>
+            <button className="sign-out" onClick={onSignOut}>Sign out</button>
           </div>
         </div>
       </aside>
@@ -577,20 +582,21 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <strong>AI Assistant</strong>
-            <span className="status-dot" />
-            <small>Local model</small>
+            <button className="mobile-menu" aria-label="Toggle navigation" onClick={() => setSidebarOpen(!sidebarOpen)}>☰</button>
+            <strong>{chatTitle}</strong>
+            <small>Personal workspace</small>
           </div>
-          <span className="model-name">Llama 3.2 · 3B</span>
+          <button className="documents-toggle" aria-expanded={documentsOpen} onClick={() => setDocumentsOpen(!documentsOpen)}>Documents {selectedDocumentIds.length > 0 ? `(${selectedDocumentIds.length})` : ""}</button>
         </header>
 
         <section className="chat-area">
           {messages.length === 0 ? (
             <div className="welcome">
               <div className="welcome-icon">✳</div>
-              <h1>What can I help you with?</h1>
+              <p className="eyebrow">A LITTLE CURIOSITY GOES A LONG WAY</p>
+              <h1>Where should we begin?</h1>
               <p>
-                Ask a question, explore an idea, or learn something new.
+                Explore an idea, untangle a problem, or ask your documents.
               </p>
 
               <div className="suggestions">
@@ -615,7 +621,7 @@ function App() {
               {messages.map((item, index) => (
                 <div className="message-row" key={index}>
                   <div className="message-avatar">
-                    {item.role === "user" ? "G" : "✳"}
+                    {item.role === "user" ? "You" : "N"}
                   </div>
                   <div className="message-content">
                     <strong>
@@ -630,7 +636,7 @@ function App() {
         </section>
 
         <div className="composer-wrapper">
-          <section className="documents-panel" aria-label="PDF documents">
+          <section className="documents-panel" aria-label="PDF documents" hidden={!documentsOpen}>
             <div className="documents-heading">
               <div>
                 <strong>PDF documents</strong>
@@ -674,13 +680,13 @@ function App() {
                         }
                       />
                       <span>{document.filename}</span>
-                      <small>{document.chunk_count} chunks</small>
+                      <small>PDF</small>
                     </label>
                     <button
                       className="delete-document"
                       type="button"
                       onClick={() => handleDeleteDocument(document.id)}
-                      disabled={isDocumentUploading}
+                      disabled={isDocumentUploading || isLoading}
                       aria-label={`Delete ${document.filename}`}
                       title="Delete PDF"
                     >
