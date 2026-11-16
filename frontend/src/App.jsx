@@ -645,7 +645,13 @@ function App() {
           )}
         </nav>
         <div className="sidebar-bottom">
-          <button className="nav-action" onClick={() => setDocumentsOpen(true)}>
+          <button
+            className="nav-action"
+            onClick={() => {
+              setDocumentsOpen(true);
+              setSidebarOpen(false);
+            }}
+          >
             <BookOpen size={17} /> Document library{" "}
             <span>{documents.length}</span>
           </button>
@@ -664,13 +670,13 @@ function App() {
             <span className="profile-icon">N</span>
             <div>
               <strong>Personal workspace</strong>
-              <small>Your ideas, connected</small>
+              <small>Chat & document library</small>
             </div>
           </div>
         </div>
       </aside>
 
-      <main className="main">
+      <main className={`main ${messages.length === 0 ? "is-empty" : ""}`}>
         <header className="topbar">
           <div className="topbar-title">
             <button
@@ -712,11 +718,14 @@ function App() {
                 <Sparkles size={30} strokeWidth={1.4} />
               </div>
               <h1>
-                A little curiosity.
+                Your next idea starts here.
                 <br />
-                <span>Endless possibilities.</span>
+                <span>Let’s make it happen.</span>
               </h1>
-              <p>Ask, explore, and make sense of your knowledge.</p>
+              <p>
+                A thoughtful space to ask questions, explore documents, and
+                create.
+              </p>
               <div className="suggestions">
                 {prompts.map(({ icon: Icon, title, description, prompt }) => (
                   <button
@@ -851,12 +860,17 @@ function App() {
               >
                 <Paperclip size={17} /> Attach PDFs
               </button>
-              <span className="composer-context">
+              <button
+                type="button"
+                className="composer-context"
+                onClick={() => setDocumentsOpen(!documentsOpen)}
+                aria-expanded={documentsOpen}
+              >
                 {selectedDocumentIds.length
                   ? `${selectedDocumentIds.length} selected`
                   : "General chat"}
                 <ChevronDown size={12} />
-              </span>
+              </button>
               <button
                 className="send-button"
                 disabled={!message.trim() || isLoading || isHistoryLoading}
