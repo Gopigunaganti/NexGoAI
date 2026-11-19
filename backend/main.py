@@ -272,11 +272,17 @@ async def chat(
 
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("Chat request failed")
+        detail = "The AI service or database is temporarily unavailable."
+        if getattr(exc, "status_code", None) == 413:
+            detail = (
+                "Groq's token-per-minute limit was exceeded. "
+                "Try again shortly or shorten the conversation."
+            )
         raise HTTPException(
             status_code=503,
-            detail="The AI service or database is temporarily unavailable.",
+            detail=detail,
         )
 
 
@@ -425,11 +431,17 @@ async def chat_stream(
                 "model": MODEL_NAME,
             }) + "\n\n"
 
-        except Exception:
+        except Exception as exc:
             logger.exception("Streaming or database save failed")
+            detail = "The AI service or database failed during streaming."
+            if getattr(exc, "status_code", None) == 413:
+                detail = (
+                    "Groq's token-per-minute limit was exceeded. "
+                    "Try again shortly or shorten the conversation."
+                )
             yield "event: error\n"
             yield "data: " + json.dumps({
-                "detail": "The AI service or database failed during streaming.",
+                "detail": detail,
             }) + "\n\n"
 
     return StreamingResponse(
