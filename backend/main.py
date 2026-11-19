@@ -27,12 +27,14 @@ from backend.retrieval import (
     retrieve_relevant_chunks,
 )
 from backend.schemas import ChatRequest, ChatResponse
+from backend.agent_mode import router as agent_router
 from backend.services import MODEL_NAME, generate_response, stream_response
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="GenAI Knowledge Assistant")
+app.include_router(agent_router)
 
 app.add_middleware(
     CORSMiddleware,
