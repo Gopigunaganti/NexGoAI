@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
+import AgentMode from "./AgentMode.jsx";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -56,7 +57,7 @@ async function responseError(response, fallback) {
   return fallback;
 }
 
-function App() {
+function ChatApp() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -571,6 +572,7 @@ function App() {
           </span>
           NexGo<span>AI</span>
         </a>
+        <a href="/agent" className="new-chat" style={{textDecoration:"none",justifyContent:"center",marginBottom:10}}><Sparkles size={18}/> Agent Mode <span>↗</span></a>
         <button
           className="new-chat"
           onClick={handleNewChat}
@@ -1049,4 +1051,6 @@ function App() {
     </div>
   );
 }
-export default App;
+export default function App() {
+  return window.location.pathname.replace(/\/$/, '') === '/agent' ? <AgentMode /> : <ChatApp />;
+}
