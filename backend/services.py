@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, Union
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage
@@ -13,12 +13,14 @@ if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY is missing from your .env file")
 
 MODEL_NAME = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+MAX_PROMPT_CONTENT_CHARACTERS = 9000
 
 model = ChatGroq(
     model=MODEL_NAME,
     api_key=GROQ_API_KEY,
     timeout=60,
     temperature=0,
+    max_tokens=1024,
 )
 
 prompt = ChatPromptTemplate.from_messages([
@@ -28,25 +30,43 @@ prompt = ChatPromptTemplate.from_messages([
 ])
 
 
+def _prepare_prompt_inputs(
+    message: str,
+    history: Optional[List[Dict[str, str]]],
+    context: str,
+) -> Tuple[List[Union[HumanMessage, AIMessage]], str]:
+    remaining = max(0, MAX_PROMPT_CONTENT_CHARACTERS - len(message))
+    context = context[:remaining]
+    remaining -= len(context)
+
+    history_messages = []
+    for item in reversed(history or []):
+        if remaining <= 0:
+            break
+        content = item["content"][-remaining:]
+        if item["role"] == "user":
+            history_messages.append(HumanMessage(content=content))
+        elif item["role"] == "assistant":
+            history_messages.append(AIMessage(content=content))
+        else:
+            continue
+        remaining -= len(content)
+
+    history_messages.reverse()
+    return history_messages, context
+
+
 def generate_response(
     message: str,
     history: Optional[List[Dict[str, str]]] = None,
     context: str = "",
     citations: str = "",
 ) -> str:
-    history = history or []
-
-    history_messages = []
-
-    for item in history:
-        if item["role"] == "user":
-            history_messages.append(
-                HumanMessage(content=item["content"])
-            )
-        elif item["role"] == "assistant":
-            history_messages.append(
-                AIMessage(content=item["content"])
-            )
+    history_messages, context = _prepare_prompt_inputs(
+        message,
+        history,
+        context,
+    )
 
     active_prompt = prompt
     if context:
@@ -78,19 +98,11 @@ def stream_response(
     context: str = "",
     citations: str = "",
 ):
-    history = history or []
-
-    history_messages = []
-
-    for item in history:
-        if item["role"] == "user":
-            history_messages.append(
-                HumanMessage(content=item["content"])
-            )
-        elif item["role"] == "assistant":
-            history_messages.append(
-                AIMessage(content=item["content"])
-            )
+    history_messages, context = _prepare_prompt_inputs(
+        message,
+        history,
+        context,
+    )
 
     active_prompt = prompt
     if context:
