@@ -44,6 +44,9 @@ continues to use the normal Groq conversation path. FastEmbed generates PDF
 embeddings locally. Indexed PDF text and vectors are stored in PostgreSQL and
 removed when a document is deleted. If replacing a prior Ollama embedding setup,
 delete and re-upload previously indexed PDFs so their vectors use the new model.
+Retrieval returns five chunks by default. Set `RAG_TOP_K` in the environment or
+`.env` to a value from 1 to 20 to change the result count; restart the backend
+after changing it.
 
 ## Deploy with Docker
 
